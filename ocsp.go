@@ -13,7 +13,7 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
-	_ "crypto/sha1"
+	_ "crypto/sha1" //nolint:gosec // not used for cryptography
 	_ "crypto/sha256"
 	_ "crypto/sha512"
 	"crypto/x509"
@@ -227,19 +227,20 @@ func signingParamsForPublicKey(pub interface{}, requestedSigAlgo x509.SignatureA
 
 	found := false
 	for _, details := range signatureAlgorithmDetails {
-		if details.algo == requestedSigAlgo {
-			if details.pubKeyAlgo != pubType {
-				err = errors.New("x509: requested SignatureAlgorithm does not match private key type")
-				return
-			}
-			sigAlgo.Algorithm, hashFunc = details.oid, details.hash
-			if hashFunc == 0 {
-				err = errors.New("x509: cannot sign with hash function requested")
-				return
-			}
-			found = true
-			break
+		if details.algo != requestedSigAlgo {
+			continue
 		}
+		if details.pubKeyAlgo != pubType {
+			err = errors.New("x509: requested SignatureAlgorithm does not match private key type")
+			return
+		}
+		sigAlgo.Algorithm, hashFunc = details.oid, details.hash
+		if hashFunc == 0 {
+			err = errors.New("x509: cannot sign with hash function requested")
+			return
+		}
+		found = true
+		break
 	}
 
 	if !found {
@@ -323,7 +324,7 @@ type Request struct {
 func (req *Request) Marshal() ([]byte, error) {
 	hashAlg := getOIDFromHashAlgorithm(req.HashAlgorithm)
 	if hashAlg == nil {
-		return nil, errors.New("Unknown hash algorithm")
+		return nil, errors.New("unknown hash algorithm")
 	}
 	return asn1.Marshal(ocspRequest{
 		tbsRequest{
