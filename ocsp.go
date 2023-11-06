@@ -84,6 +84,7 @@ type certID struct {
 }
 
 // https://tools.ietf.org/html/rfc2560#section-4.1.1
+// https://datatracker.ietf.org/doc/html/rfc6960#section-4.1.1
 type ocspRequest struct {
 	TBSRequest tbsRequest
 }
@@ -99,6 +100,7 @@ type request struct {
 	Cert certID
 }
 
+// https://datatracker.ietf.org/doc/html/rfc6960#section-4.2.1
 type responseASN1 struct {
 	Status   asn1.Enumerated
 	Response responseBytes `asn1:"explicit,tag:0,optional"`
@@ -349,6 +351,8 @@ func (req *Request) Marshal() ([]byte, error) {
 // Response represents an OCSP response containing a single SingleResponse. See
 // RFC 6960.
 type Response struct {
+	Raw []byte
+
 	// Status is one of {Good, Revoked, Unknown}
 	Status                                        int
 	SerialNumber                                  *big.Int
@@ -536,15 +540,16 @@ func ParseResponseForCert(bytes []byte, cert, issuer *x509.Certificate) (*Respon
 	}
 
 	ret := &Response{
+		Raw:                bytes,
 		TBSResponseData:    basicResp.TBSResponseData.Raw,
 		Signature:          basicResp.Signature.RightAlign(),
 		SignatureAlgorithm: getSignatureAlgorithmFromOID(basicResp.SignatureAlgorithm.Algorithm),
 		Extensions:         singleResp.SingleExtensions,
 		SerialNumber:       singleResp.CertID.SerialNumber,
 		ProducedAt:         basicResp.TBSResponseData.ProducedAt,
+		ResponseExtensions: basicResp.TBSResponseData.ResponseExtensions,
 		ThisUpdate:         singleResp.ThisUpdate,
 		NextUpdate:         singleResp.NextUpdate,
-		ResponseExtensions: basicResp.TBSResponseData.ResponseExtensions,
 	}
 
 	// Handle the ResponderID CHOICE tag. ResponderID can be flattened into
