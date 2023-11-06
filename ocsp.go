@@ -5,7 +5,7 @@
 // Package ocsp parses OCSP responses as specified in RFC 2560. OCSP responses
 // are signed messages attesting to the validity of a certificate for a small
 // period of time. This is used to manage revocation for X.509 certificates.
-package ocsp // import "golang.org/x/crypto/ocsp"
+package ocsp
 
 import (
 	"crypto"
@@ -84,20 +84,23 @@ type certID struct {
 }
 
 // https://tools.ietf.org/html/rfc2560#section-4.1.1
+// https://datatracker.ietf.org/doc/html/rfc6960#section-4.1.1
 type ocspRequest struct {
 	TBSRequest tbsRequest
 }
 
 type tbsRequest struct {
-	Version       int              `asn1:"explicit,tag:0,default:0,optional"`
-	RequestorName pkix.RDNSequence `asn1:"explicit,tag:1,optional"`
-	RequestList   []request
+	Version           int              `asn1:"explicit,tag:0,default:0,optional"`
+	RequestorName     pkix.RDNSequence `asn1:"explicit,tag:1,optional"`
+	RequestList       []request
+	RequestExtensions []pkix.Extension `asn1:"explicit,tag:2,optional"`
 }
 
 type request struct {
 	Cert certID
 }
 
+// https://datatracker.ietf.org/doc/html/rfc6960#section-4.2.1
 type responseASN1 struct {
 	Status   asn1.Enumerated
 	Response responseBytes `asn1:"explicit,tag:0,optional"`
@@ -116,11 +119,12 @@ type basicResponse struct {
 }
 
 type responseData struct {
-	Raw            asn1.RawContent
-	Version        int `asn1:"optional,default:0,explicit,tag:0"`
-	RawResponderID asn1.RawValue
-	ProducedAt     time.Time `asn1:"generalized"`
-	Responses      []singleResponse
+	Raw                asn1.RawContent
+	Version            int `asn1:"optional,default:0,explicit,tag:0"`
+	RawResponderID     asn1.RawValue
+	ProducedAt         time.Time `asn1:"generalized"`
+	Responses          []singleResponse
+	ResponseExtensions []pkix.Extension `asn1:"optional,explicit,tag:1"`
 }
 
 type singleResponse struct {
@@ -314,6 +318,7 @@ type Request struct {
 	IssuerNameHash []byte
 	IssuerKeyHash  []byte
 	SerialNumber   *big.Int
+	Extensions     []pkix.Extension
 }
 
 // Marshal marshals the OCSP request to ASN.1 DER encoded form.
@@ -386,6 +391,19 @@ type Response struct {
 	// ExtraExtensions field is not populated when parsing certificates, see
 	// Extensions.
 	ExtraExtensions []pkix.Extension
+
+	// ResponseExtensions contains raw X.509 extensions from the
+	// responseExtensions field of the OCSP response. When marshaling OCSP
+	// responses, the ResponseExtensions field is ignored, see
+	// ResponseExtraExtensions.
+	ResponseExtensions []pkix.Extension
+
+	// ResponseExtraExtensions contains extensions to be copied, raw, into any
+	// marshaled OCSP response (in the responseExtensions field). Values
+	// override any extensions that would otherwise be produced based on the
+	// other fields. The ResponseExtraExtensions field is not populated when
+	// parsing certificates, see ResponseExtensions.
+	ResponseExtraExtensions []pkix.Extension
 }
 
 // These are pre-serialized error responses for the various non-success codes
@@ -444,6 +462,7 @@ func ParseRequest(bytes []byte) (*Request, error) {
 		IssuerNameHash: innerRequest.Cert.NameHash,
 		IssuerKeyHash:  innerRequest.Cert.IssuerKeyHash,
 		SerialNumber:   innerRequest.Cert.SerialNumber,
+		Extensions:     req.TBSRequest.RequestExtensions,
 	}, nil
 }
 
@@ -527,6 +546,7 @@ func ParseResponseForCert(bytes []byte, cert, issuer *x509.Certificate) (*Respon
 		Extensions:         singleResp.SingleExtensions,
 		SerialNumber:       singleResp.CertID.SerialNumber,
 		ProducedAt:         basicResp.TBSResponseData.ProducedAt,
+		ResponseExtensions: basicResp.TBSResponseData.ResponseExtensions,
 		ThisUpdate:         singleResp.ThisUpdate,
 		NextUpdate:         singleResp.NextUpdate,
 	}
@@ -741,10 +761,11 @@ func CreateResponse(issuer, responderCert *x509.Certificate, template Response, 
 		Bytes:      responderCert.RawSubject,
 	}
 	tbsResponseData := responseData{
-		Version:        0,
-		RawResponderID: rawResponderID,
-		ProducedAt:     time.Now().Truncate(time.Minute).UTC(),
-		Responses:      []singleResponse{innerResponse},
+		Version:            0,
+		RawResponderID:     rawResponderID,
+		ProducedAt:         time.Now().Truncate(time.Minute).UTC(),
+		Responses:          []singleResponse{innerResponse},
+		ResponseExtensions: template.ResponseExtraExtensions,
 	}
 
 	tbsResponseDataDER, err := asn1.Marshal(tbsResponseData)
