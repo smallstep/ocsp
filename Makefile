@@ -1,4 +1,4 @@
-PKG?=github.com/smallstep/sshutil
+PKG?=go.step.sm/ocsp
 
 # Set V to 1 for verbose output from the Makefile
 Q=$(if $V,,@)
@@ -36,12 +36,15 @@ test:
 #########################################
 
 fmt:
-	$Q goimports -l -w $(SRC)
+	$Q goimports -local github.com/golangci/golangci-lint -l -w $(SRC)
 
-lint: SHELL:=/bin/bash
-lint:
+lint: golint govulncheck
+
+golint: SHELL:=/bin/bash
+golint:
 	$Q LOG_LEVEL=error golangci-lint run --config <(curl -s https://raw.githubusercontent.com/smallstep/workflows/master/.golangci.yml) --timeout=30m
+
+govulncheck:
 	$Q govulncheck ./...
 
-.PHONY: fmt lint
-
+.PHONY: fmt lint golint govulncheck
