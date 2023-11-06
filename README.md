@@ -1,3 +1,5 @@
+# Archiving because we no longer need the extra extensions this fork was intended for. Using x/crypto/ocsp instead.
+
 # ocsp
 
 Fork of x/crypto/ocsp with some extra extensions.
