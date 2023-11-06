@@ -124,7 +124,7 @@ type responseData struct {
 	RawResponderID     asn1.RawValue
 	ProducedAt         time.Time `asn1:"generalized"`
 	Responses          []singleResponse
-	ResponseExtensions []pkix.Extension `asn1:"optional,explicit,tag:1"`
+	ResponseExtensions []pkix.Extension `asn1:"explicit,tag:1,optional"`
 }
 
 type singleResponse struct {
