@@ -2,8 +2,6 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-//go:build go1.7
-
 package ocsp
 
 import (
@@ -255,6 +253,37 @@ func TestOCSPResponse(t *testing.T) {
 		t.Fatal("CreateResponse didn't fail with non-valid template.IssuerHash value crypto.MD5")
 	}
 
+	mustResponderCert := func(sigAlgo x509.SignatureAlgorithm) *x509.Certificate {
+		template, err := x509.ParseCertificate(responderCert)
+		if err != nil {
+			t.Fatal(err)
+		}
+		template.Signature = nil
+		template.SignatureAlgorithm = sigAlgo
+
+		der, err := x509.CreateCertificate(rand.Reader, template, template, responderPrivateKey.Public(), responderPrivateKey)
+		if err != nil {
+			t.Fatal(err)
+		}
+		responder, err := x509.ParseCertificate(der)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return responder
+	}
+
+	var sigAlgos = []struct {
+		name               string
+		certificate        *x509.Certificate
+		signatureAlgorithm x509.SignatureAlgorithm
+	}{
+		{"x509.SHA256WithRSA", responder, x509.SHA256WithRSA},
+		{"x509.SHA384WithRSA", mustResponderCert(x509.SHA384WithRSA), x509.SHA384WithRSA},
+		{"x509.SHA512WithRSA", mustResponderCert(x509.SHA512WithRSA), x509.SHA512WithRSA},
+		{"x509.SHA256WithRSAPSS", mustResponderCert(x509.SHA256WithRSAPSS), x509.SHA256WithRSAPSS},
+		{"x509.SHA384WithRSAPSS", mustResponderCert(x509.SHA384WithRSAPSS), x509.SHA384WithRSAPSS},
+		{"x509.SHA512WithRSAPSS", mustResponderCert(x509.SHA512WithRSAPSS), x509.SHA512WithRSAPSS},
+	}
 	testCases := []struct {
 		name       string
 		issuerHash crypto.Hash
@@ -266,60 +295,65 @@ func TestOCSPResponse(t *testing.T) {
 		{"crypto.SHA512", crypto.SHA512},
 	}
 	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			template.IssuerHash = tc.issuerHash
-			responseBytes, err := CreateResponse(issuer, responder, template, responderPrivateKey)
-			if err != nil {
-				t.Fatalf("CreateResponse failed: %s", err)
-			}
+		for _, sa := range sigAlgos {
+			t.Run(tc.name+"+"+sa.name, func(t *testing.T) {
+				template.IssuerHash = tc.issuerHash
+				template.Certificate = sa.certificate
+				template.SignatureAlgorithm = sa.signatureAlgorithm
 
-			resp, err := ParseResponse(responseBytes, nil)
-			if err != nil {
-				t.Fatalf("ParseResponse failed: %s", err)
-			}
+				responseBytes, err := CreateResponse(issuer, sa.certificate, template, responderPrivateKey)
+				if err != nil {
+					t.Fatalf("CreateResponse failed: %s", err)
+				}
 
-			if !reflect.DeepEqual(resp.ThisUpdate, template.ThisUpdate) {
-				t.Errorf("resp.ThisUpdate: got %v, want %v", resp.ThisUpdate, template.ThisUpdate)
-			}
+				resp, err := ParseResponse(responseBytes, nil)
+				if err != nil {
+					t.Fatalf("ParseResponse failed: %s", err)
+				}
 
-			if !reflect.DeepEqual(resp.NextUpdate, template.NextUpdate) {
-				t.Errorf("resp.NextUpdate: got %v, want %v", resp.NextUpdate, template.NextUpdate)
-			}
+				if !reflect.DeepEqual(resp.ThisUpdate, template.ThisUpdate) {
+					t.Errorf("resp.ThisUpdate: got %v, want %v", resp.ThisUpdate, template.ThisUpdate)
+				}
 
-			if !reflect.DeepEqual(resp.RevokedAt, template.RevokedAt) {
-				t.Errorf("resp.RevokedAt: got %v, want %v", resp.RevokedAt, template.RevokedAt)
-			}
+				if !reflect.DeepEqual(resp.NextUpdate, template.NextUpdate) {
+					t.Errorf("resp.NextUpdate: got %v, want %v", resp.NextUpdate, template.NextUpdate)
+				}
 
-			if !reflect.DeepEqual(resp.Extensions, template.ExtraExtensions) {
-				t.Errorf("resp.Extensions: got %v, want %v", resp.Extensions, template.ExtraExtensions)
-			}
+				if !reflect.DeepEqual(resp.RevokedAt, template.RevokedAt) {
+					t.Errorf("resp.RevokedAt: got %v, want %v", resp.RevokedAt, template.RevokedAt)
+				}
 
-			delay := time.Since(resp.ProducedAt)
-			if delay < -time.Hour || delay > time.Hour {
-				t.Errorf("resp.ProducedAt: got %s, want close to current time (%s)", resp.ProducedAt, time.Now())
-			}
+				if !reflect.DeepEqual(resp.Extensions, template.ExtraExtensions) {
+					t.Errorf("resp.Extensions: got %v, want %v", resp.Extensions, template.ExtraExtensions)
+				}
 
-			if resp.Status != template.Status {
-				t.Errorf("resp.Status: got %d, want %d", resp.Status, template.Status)
-			}
+				delay := time.Since(resp.ProducedAt)
+				if delay < -time.Hour || delay > time.Hour {
+					t.Errorf("resp.ProducedAt: got %s, want close to current time (%s)", resp.ProducedAt, time.Now())
+				}
 
-			if resp.SerialNumber.Cmp(template.SerialNumber) != 0 {
-				t.Errorf("resp.SerialNumber: got %x, want %x", resp.SerialNumber, template.SerialNumber)
-			}
+				if resp.Status != template.Status {
+					t.Errorf("resp.Status: got %d, want %d", resp.Status, template.Status)
+				}
 
-			if resp.RevocationReason != template.RevocationReason {
-				t.Errorf("resp.RevocationReason: got %d, want %d", resp.RevocationReason, template.RevocationReason)
-			}
+				if resp.SerialNumber.Cmp(template.SerialNumber) != 0 {
+					t.Errorf("resp.SerialNumber: got %x, want %x", resp.SerialNumber, template.SerialNumber)
+				}
 
-			expectedHash := tc.issuerHash
-			if tc.issuerHash == 0 {
-				expectedHash = crypto.SHA1
-			}
+				if resp.RevocationReason != template.RevocationReason {
+					t.Errorf("resp.RevocationReason: got %d, want %d", resp.RevocationReason, template.RevocationReason)
+				}
 
-			if resp.IssuerHash != expectedHash {
-				t.Errorf("resp.IssuerHash: got %d, want %d", resp.IssuerHash, expectedHash)
-			}
-		})
+				expectedHash := tc.issuerHash
+				if tc.issuerHash == 0 {
+					expectedHash = crypto.SHA1
+				}
+
+				if resp.IssuerHash != expectedHash {
+					t.Errorf("resp.IssuerHash: got %d, want %d", resp.IssuerHash, expectedHash)
+				}
+			})
+		}
 	}
 }
 
@@ -377,14 +411,14 @@ func createMultiResp() ([]byte, error) {
 		return nil, err
 	}
 
-	hashFunc, signatureAlgorithm, err := signingParamsForPublicKey(k.Public(), x509.SHA1WithRSA)
+	signerOpts, signatureAlgorithm, err := signingParamsForPublicKey(k.Public(), x509.SHA1WithRSA)
 	if err != nil {
 		return nil, err
 	}
 
-	responseHash := hashFunc.New()
+	responseHash := signerOpts.HashFunc().New()
 	responseHash.Write(tbsResponseDataDER)
-	signature, err := k.Sign(rand.Reader, responseHash.Sum(nil), hashFunc)
+	signature, err := k.Sign(rand.Reader, responseHash.Sum(nil), signerOpts)
 	if err != nil {
 		return nil, err
 	}
