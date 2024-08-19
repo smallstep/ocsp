@@ -265,11 +265,11 @@ func TestOCSPResponse(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		responder, err := x509.ParseCertificate(der)
+		cert, err := x509.ParseCertificate(der)
 		if err != nil {
 			t.Fatal(err)
 		}
-		return responder
+		return cert
 	}
 
 	var sigAlgos = []struct {

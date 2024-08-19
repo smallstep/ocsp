@@ -523,9 +523,9 @@ func (p ParseError) Error() string {
 // ParseRequest parses an OCSP request in DER form. It only supports
 // requests for a single certificate. Signed requests are not supported.
 // If a request includes a signature, it will result in a ParseError.
-func ParseRequest(bytes []byte) (*Request, error) {
+func ParseRequest(der []byte) (*Request, error) {
 	var req ocspRequest
-	rest, err := asn1.Unmarshal(bytes, &req)
+	rest, err := asn1.Unmarshal(der, &req)
 	if err != nil {
 		return nil, err
 	}
@@ -567,8 +567,8 @@ func ParseRequest(bytes []byte) (*Request, error) {
 //
 // Invalid responses and parse failures will result in a ParseError.
 // Error responses will result in a ResponseError.
-func ParseResponse(bytes []byte, issuer *x509.Certificate) (*Response, error) {
-	return ParseResponseForCert(bytes, nil, issuer)
+func ParseResponse(der []byte, issuer *x509.Certificate) (*Response, error) {
+	return ParseResponseForCert(der, nil, issuer)
 }
 
 // ParseResponseForCert acts identically to ParseResponse, except it supports
@@ -576,9 +576,9 @@ func ParseResponse(bytes []byte, issuer *x509.Certificate) (*Response, error) {
 // multiple statuses and cert is not nil, then ParseResponseForCert will return
 // the first status which contains a matching serial, otherwise it will return an
 // error. If cert is nil, then the first status in the response will be returned.
-func ParseResponseForCert(bytes []byte, cert, issuer *x509.Certificate) (*Response, error) {
+func ParseResponseForCert(der []byte, cert, issuer *x509.Certificate) (*Response, error) {
 	var resp responseASN1
-	rest, err := asn1.Unmarshal(bytes, &resp)
+	rest, err := asn1.Unmarshal(der, &resp)
 	if err != nil {
 		return nil, err
 	}
@@ -625,7 +625,7 @@ func ParseResponseForCert(bytes []byte, cert, issuer *x509.Certificate) (*Respon
 	}
 
 	ret := &Response{
-		Raw:                bytes,
+		Raw:                der,
 		TBSResponseData:    basicResp.TBSResponseData.Raw,
 		Signature:          basicResp.Signature.RightAlign(),
 		SignatureAlgorithm: getSignatureAlgorithmFromAI(basicResp.SignatureAlgorithm),
