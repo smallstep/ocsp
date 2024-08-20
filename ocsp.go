@@ -312,7 +312,7 @@ func getSignatureAlgorithmFromAI(ai pkix.AlgorithmIdentifier) x509.SignatureAlgo
 	}
 
 	// RSA PSS is special because it encodes important parameters
-	// in the Parameters.
+	// in the parameters.
 	var params pssParameters
 	if _, err := asn1.Unmarshal(ai.Parameters.FullBytes, &params); err != nil {
 		return x509.UnknownSignatureAlgorithm
@@ -324,7 +324,7 @@ func getSignatureAlgorithmFromAI(ai pkix.AlgorithmIdentifier) x509.SignatureAlgo
 	}
 
 	// PSS is greatly overburdened with options. This code forces them into
-	// three buckets by requiring that the MGF1 hash function always match the
+	// three buckets by requiring that the MGF1 hash function always matches the
 	// message hash function (as recommended in RFC 3447, Section 8.1), that the
 	// salt length matches the hash length, and that the trailer field has the
 	// default value.
