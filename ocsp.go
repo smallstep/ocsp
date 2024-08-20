@@ -8,6 +8,7 @@
 package ocsp
 
 import (
+	"bytes"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -149,6 +150,7 @@ var (
 	oidSignatureSHA256WithRSA   = asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 1, 11}
 	oidSignatureSHA384WithRSA   = asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 1, 12}
 	oidSignatureSHA512WithRSA   = asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 1, 13}
+	oidSignatureRSAPSS          = asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 1, 10}
 	oidSignatureDSAWithSHA1     = asn1.ObjectIdentifier{1, 2, 840, 10040, 4, 3}
 	oidSignatureDSAWithSHA256   = asn1.ObjectIdentifier{2, 16, 840, 1, 101, 3, 4, 3, 2}
 	oidSignatureECDSAWithSHA1   = asn1.ObjectIdentifier{1, 2, 840, 10045, 4, 1}
@@ -157,59 +159,98 @@ var (
 	oidSignatureECDSAWithSHA512 = asn1.ObjectIdentifier{1, 2, 840, 10045, 4, 3, 4}
 )
 
+var (
+	oidSHA1   = asn1.ObjectIdentifier{1, 3, 14, 3, 2, 26}
+	oidSHA256 = asn1.ObjectIdentifier{2, 16, 840, 1, 101, 3, 4, 2, 1}
+	oidSHA384 = asn1.ObjectIdentifier{2, 16, 840, 1, 101, 3, 4, 2, 2}
+	oidSHA512 = asn1.ObjectIdentifier{2, 16, 840, 1, 101, 3, 4, 2, 3}
+
+	oidMGF1 = asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 1, 8}
+)
+
 var hashOIDs = map[crypto.Hash]asn1.ObjectIdentifier{
-	crypto.SHA1:   asn1.ObjectIdentifier([]int{1, 3, 14, 3, 2, 26}),
-	crypto.SHA256: asn1.ObjectIdentifier([]int{2, 16, 840, 1, 101, 3, 4, 2, 1}),
-	crypto.SHA384: asn1.ObjectIdentifier([]int{2, 16, 840, 1, 101, 3, 4, 2, 2}),
-	crypto.SHA512: asn1.ObjectIdentifier([]int{2, 16, 840, 1, 101, 3, 4, 2, 3}),
+	crypto.SHA1:   oidSHA1,
+	crypto.SHA256: oidSHA256,
+	crypto.SHA384: oidSHA384,
+	crypto.SHA512: oidSHA512,
 }
 
 // TODO(rlb): This is also from crypto/x509, so same comment as AGL's below
 var signatureAlgorithmDetails = []struct {
 	algo       x509.SignatureAlgorithm
 	oid        asn1.ObjectIdentifier
+	params     asn1.RawValue
 	pubKeyAlgo x509.PublicKeyAlgorithm
 	hash       crypto.Hash
+	isRSAPSS   bool
 }{
-	{x509.MD2WithRSA, oidSignatureMD2WithRSA, x509.RSA, crypto.Hash(0) /* no value for MD2 */},
-	{x509.MD5WithRSA, oidSignatureMD5WithRSA, x509.RSA, crypto.MD5},
-	{x509.SHA1WithRSA, oidSignatureSHA1WithRSA, x509.RSA, crypto.SHA1},
-	{x509.SHA256WithRSA, oidSignatureSHA256WithRSA, x509.RSA, crypto.SHA256},
-	{x509.SHA384WithRSA, oidSignatureSHA384WithRSA, x509.RSA, crypto.SHA384},
-	{x509.SHA512WithRSA, oidSignatureSHA512WithRSA, x509.RSA, crypto.SHA512},
-	{x509.DSAWithSHA1, oidSignatureDSAWithSHA1, x509.DSA, crypto.SHA1},
-	{x509.DSAWithSHA256, oidSignatureDSAWithSHA256, x509.DSA, crypto.SHA256},
-	{x509.ECDSAWithSHA1, oidSignatureECDSAWithSHA1, x509.ECDSA, crypto.SHA1},
-	{x509.ECDSAWithSHA256, oidSignatureECDSAWithSHA256, x509.ECDSA, crypto.SHA256},
-	{x509.ECDSAWithSHA384, oidSignatureECDSAWithSHA384, x509.ECDSA, crypto.SHA384},
-	{x509.ECDSAWithSHA512, oidSignatureECDSAWithSHA512, x509.ECDSA, crypto.SHA512},
+	{x509.MD2WithRSA, oidSignatureMD2WithRSA, asn1.NullRawValue, x509.RSA, crypto.Hash(0) /* no value for MD2 */, false},
+	{x509.MD5WithRSA, oidSignatureMD5WithRSA, asn1.NullRawValue, x509.RSA, crypto.MD5, false},
+	{x509.SHA1WithRSA, oidSignatureSHA1WithRSA, asn1.NullRawValue, x509.RSA, crypto.SHA1, false},
+	{x509.SHA256WithRSA, oidSignatureSHA256WithRSA, asn1.NullRawValue, x509.RSA, crypto.SHA256, false},
+	{x509.SHA384WithRSA, oidSignatureSHA384WithRSA, asn1.NullRawValue, x509.RSA, crypto.SHA384, false},
+	{x509.SHA512WithRSA, oidSignatureSHA512WithRSA, asn1.NullRawValue, x509.RSA, crypto.SHA512, false},
+	{x509.SHA256WithRSAPSS, oidSignatureRSAPSS, pssParametersSHA256, x509.RSA, crypto.SHA256, true},
+	{x509.SHA384WithRSAPSS, oidSignatureRSAPSS, pssParametersSHA384, x509.RSA, crypto.SHA384, true},
+	{x509.SHA512WithRSAPSS, oidSignatureRSAPSS, pssParametersSHA512, x509.RSA, crypto.SHA512, true},
+	{x509.DSAWithSHA1, oidSignatureDSAWithSHA1, emptyRawValue, x509.DSA, crypto.SHA1, false},
+	{x509.DSAWithSHA256, oidSignatureDSAWithSHA256, emptyRawValue, x509.DSA, crypto.SHA256, false},
+	{x509.ECDSAWithSHA1, oidSignatureECDSAWithSHA1, emptyRawValue, x509.ECDSA, crypto.SHA1, false},
+	{x509.ECDSAWithSHA256, oidSignatureECDSAWithSHA256, emptyRawValue, x509.ECDSA, crypto.SHA256, false},
+	{x509.ECDSAWithSHA384, oidSignatureECDSAWithSHA384, emptyRawValue, x509.ECDSA, crypto.SHA384, false},
+	{x509.ECDSAWithSHA512, oidSignatureECDSAWithSHA512, emptyRawValue, x509.ECDSA, crypto.SHA512, false},
+}
+
+var emptyRawValue = asn1.RawValue{}
+
+// DER encoded RSA PSS parameters for the
+// SHA256, SHA384, and SHA512 hashes as defined in RFC 3447, Appendix A.2.3.
+// The parameters contain the following values:
+//   - hashAlgorithm contains the associated hash identifier with NULL parameters
+//   - maskGenAlgorithm always contains the default mgf1SHA1 identifier
+//   - saltLength contains the length of the associated hash
+//   - trailerField always contains the default trailerFieldBC value
+var (
+	pssParametersSHA256 = asn1.RawValue{FullBytes: []byte{48, 52, 160, 15, 48, 13, 6, 9, 96, 134, 72, 1, 101, 3, 4, 2, 1, 5, 0, 161, 28, 48, 26, 6, 9, 42, 134, 72, 134, 247, 13, 1, 1, 8, 48, 13, 6, 9, 96, 134, 72, 1, 101, 3, 4, 2, 1, 5, 0, 162, 3, 2, 1, 32}}
+	pssParametersSHA384 = asn1.RawValue{FullBytes: []byte{48, 52, 160, 15, 48, 13, 6, 9, 96, 134, 72, 1, 101, 3, 4, 2, 2, 5, 0, 161, 28, 48, 26, 6, 9, 42, 134, 72, 134, 247, 13, 1, 1, 8, 48, 13, 6, 9, 96, 134, 72, 1, 101, 3, 4, 2, 2, 5, 0, 162, 3, 2, 1, 48}}
+	pssParametersSHA512 = asn1.RawValue{FullBytes: []byte{48, 52, 160, 15, 48, 13, 6, 9, 96, 134, 72, 1, 101, 3, 4, 2, 3, 5, 0, 161, 28, 48, 26, 6, 9, 42, 134, 72, 134, 247, 13, 1, 1, 8, 48, 13, 6, 9, 96, 134, 72, 1, 101, 3, 4, 2, 3, 5, 0, 162, 3, 2, 1, 64}}
+)
+
+// pssParameters reflects the parameters in an AlgorithmIdentifier that
+// specifies RSA PSS. See RFC 3447, Appendix A.2.3.
+type pssParameters struct {
+	// The following three fields are not marked as
+	// optional because the default values specify SHA-1,
+	// which is no longer suitable for use in signatures.
+	Hash         pkix.AlgorithmIdentifier `asn1:"explicit,tag:0"`
+	MGF          pkix.AlgorithmIdentifier `asn1:"explicit,tag:1"`
+	SaltLength   int                      `asn1:"explicit,tag:2"`
+	TrailerField int                      `asn1:"optional,explicit,tag:3,default:1"`
 }
 
 // TODO(rlb): This is also from crypto/x509, so same comment as AGL's below
-func signingParamsForPublicKey(pub interface{}, requestedSigAlgo x509.SignatureAlgorithm) (hashFunc crypto.Hash, sigAlgo pkix.AlgorithmIdentifier, err error) {
+func signingParamsForPublicKey(pub interface{}, requestedSigAlgo x509.SignatureAlgorithm) (signerOpts crypto.SignerOpts, sigAlgo pkix.AlgorithmIdentifier, err error) {
 	var pubType x509.PublicKeyAlgorithm
 
 	switch pub := pub.(type) {
 	case *rsa.PublicKey:
 		pubType = x509.RSA
-		hashFunc = crypto.SHA256
+		signerOpts = crypto.SHA256
 		sigAlgo.Algorithm = oidSignatureSHA256WithRSA
-		sigAlgo.Parameters = asn1.RawValue{
-			Tag: 5,
-		}
+		sigAlgo.Parameters = asn1.NullRawValue
 
 	case *ecdsa.PublicKey:
 		pubType = x509.ECDSA
 
 		switch pub.Curve {
 		case elliptic.P224(), elliptic.P256():
-			hashFunc = crypto.SHA256
+			signerOpts = crypto.SHA256
 			sigAlgo.Algorithm = oidSignatureECDSAWithSHA256
 		case elliptic.P384():
-			hashFunc = crypto.SHA384
+			signerOpts = crypto.SHA384
 			sigAlgo.Algorithm = oidSignatureECDSAWithSHA384
 		case elliptic.P521():
-			hashFunc = crypto.SHA512
+			signerOpts = crypto.SHA512
 			sigAlgo.Algorithm = oidSignatureECDSAWithSHA512
 		default:
 			err = errors.New("x509: unknown elliptic curve")
@@ -227,7 +268,6 @@ func signingParamsForPublicKey(pub interface{}, requestedSigAlgo x509.SignatureA
 		return
 	}
 
-	found := false
 	for _, details := range signatureAlgorithmDetails {
 		if details.algo != requestedSigAlgo {
 			continue
@@ -236,30 +276,75 @@ func signingParamsForPublicKey(pub interface{}, requestedSigAlgo x509.SignatureA
 			err = errors.New("x509: requested SignatureAlgorithm does not match private key type")
 			return
 		}
-		sigAlgo.Algorithm, hashFunc = details.oid, details.hash
-		if hashFunc == 0 {
+		if details.hash == crypto.Hash(0) {
 			err = errors.New("x509: cannot sign with hash function requested")
 			return
 		}
-		found = true
-		break
+		if details.isRSAPSS {
+			signerOpts = &rsa.PSSOptions{
+				SaltLength: rsa.PSSSaltLengthEqualsHash,
+				Hash:       details.hash,
+			}
+		} else {
+			signerOpts = details.hash
+		}
+
+		return signerOpts, pkix.AlgorithmIdentifier{
+			Algorithm:  details.oid,
+			Parameters: details.params,
+		}, nil
 	}
 
-	if !found {
-		err = errors.New("x509: unknown SignatureAlgorithm")
-	}
-
+	err = errors.New("x509: unknown SignatureAlgorithm")
 	return
 }
 
 // TODO(agl): this is taken from crypto/x509 and so should probably be exported
 // from crypto/x509 or crypto/x509/pkix.
-func getSignatureAlgorithmFromOID(oid asn1.ObjectIdentifier) x509.SignatureAlgorithm {
-	for _, details := range signatureAlgorithmDetails {
-		if oid.Equal(details.oid) {
-			return details.algo
+func getSignatureAlgorithmFromAI(ai pkix.AlgorithmIdentifier) x509.SignatureAlgorithm {
+	if !ai.Algorithm.Equal(oidSignatureRSAPSS) {
+		for _, details := range signatureAlgorithmDetails {
+			if ai.Algorithm.Equal(details.oid) {
+				return details.algo
+			}
 		}
+		return x509.UnknownSignatureAlgorithm
 	}
+
+	// RSA PSS is special because it encodes important parameters
+	// in the parameters.
+	var params pssParameters
+	if _, err := asn1.Unmarshal(ai.Parameters.FullBytes, &params); err != nil {
+		return x509.UnknownSignatureAlgorithm
+	}
+
+	var mgf1HashFunc pkix.AlgorithmIdentifier
+	if _, err := asn1.Unmarshal(params.MGF.Parameters.FullBytes, &mgf1HashFunc); err != nil {
+		return x509.UnknownSignatureAlgorithm
+	}
+
+	// PSS is greatly overburdened with options. This code forces them into
+	// three buckets by requiring that the MGF1 hash function always matches the
+	// message hash function (as recommended in RFC 3447, Section 8.1), that the
+	// salt length matches the hash length, and that the trailer field has the
+	// default value.
+	if (len(params.Hash.Parameters.FullBytes) != 0 && !bytes.Equal(params.Hash.Parameters.FullBytes, asn1.NullBytes)) ||
+		!params.MGF.Algorithm.Equal(oidMGF1) ||
+		!mgf1HashFunc.Algorithm.Equal(params.Hash.Algorithm) ||
+		(len(mgf1HashFunc.Parameters.FullBytes) != 0 && !bytes.Equal(mgf1HashFunc.Parameters.FullBytes, asn1.NullBytes)) ||
+		params.TrailerField != 1 {
+		return x509.UnknownSignatureAlgorithm
+	}
+
+	switch {
+	case params.Hash.Algorithm.Equal(oidSHA256) && params.SaltLength == 32:
+		return x509.SHA256WithRSAPSS
+	case params.Hash.Algorithm.Equal(oidSHA384) && params.SaltLength == 48:
+		return x509.SHA384WithRSAPSS
+	case params.Hash.Algorithm.Equal(oidSHA512) && params.SaltLength == 64:
+		return x509.SHA512WithRSAPSS
+	}
+
 	return x509.UnknownSignatureAlgorithm
 }
 
@@ -438,9 +523,9 @@ func (p ParseError) Error() string {
 // ParseRequest parses an OCSP request in DER form. It only supports
 // requests for a single certificate. Signed requests are not supported.
 // If a request includes a signature, it will result in a ParseError.
-func ParseRequest(bytes []byte) (*Request, error) {
+func ParseRequest(der []byte) (*Request, error) {
 	var req ocspRequest
-	rest, err := asn1.Unmarshal(bytes, &req)
+	rest, err := asn1.Unmarshal(der, &req)
 	if err != nil {
 		return nil, err
 	}
@@ -482,8 +567,8 @@ func ParseRequest(bytes []byte) (*Request, error) {
 //
 // Invalid responses and parse failures will result in a ParseError.
 // Error responses will result in a ResponseError.
-func ParseResponse(bytes []byte, issuer *x509.Certificate) (*Response, error) {
-	return ParseResponseForCert(bytes, nil, issuer)
+func ParseResponse(der []byte, issuer *x509.Certificate) (*Response, error) {
+	return ParseResponseForCert(der, nil, issuer)
 }
 
 // ParseResponseForCert acts identically to ParseResponse, except it supports
@@ -491,9 +576,9 @@ func ParseResponse(bytes []byte, issuer *x509.Certificate) (*Response, error) {
 // multiple statuses and cert is not nil, then ParseResponseForCert will return
 // the first status which contains a matching serial, otherwise it will return an
 // error. If cert is nil, then the first status in the response will be returned.
-func ParseResponseForCert(bytes []byte, cert, issuer *x509.Certificate) (*Response, error) {
+func ParseResponseForCert(der []byte, cert, issuer *x509.Certificate) (*Response, error) {
 	var resp responseASN1
-	rest, err := asn1.Unmarshal(bytes, &resp)
+	rest, err := asn1.Unmarshal(der, &resp)
 	if err != nil {
 		return nil, err
 	}
@@ -540,10 +625,10 @@ func ParseResponseForCert(bytes []byte, cert, issuer *x509.Certificate) (*Respon
 	}
 
 	ret := &Response{
-		Raw:                bytes,
+		Raw:                der,
 		TBSResponseData:    basicResp.TBSResponseData.Raw,
 		Signature:          basicResp.Signature.RightAlign(),
-		SignatureAlgorithm: getSignatureAlgorithmFromOID(basicResp.SignatureAlgorithm.Algorithm),
+		SignatureAlgorithm: getSignatureAlgorithmFromAI(basicResp.SignatureAlgorithm),
 		Extensions:         singleResp.SingleExtensions,
 		SerialNumber:       singleResp.CertID.SerialNumber,
 		ProducedAt:         basicResp.TBSResponseData.ProducedAt,
@@ -774,14 +859,14 @@ func CreateResponse(issuer, responderCert *x509.Certificate, template Response, 
 		return nil, err
 	}
 
-	hashFunc, signatureAlgorithm, err := signingParamsForPublicKey(priv.Public(), template.SignatureAlgorithm)
+	signerOpts, signatureAlgorithm, err := signingParamsForPublicKey(priv.Public(), template.SignatureAlgorithm)
 	if err != nil {
 		return nil, err
 	}
 
-	responseHash := hashFunc.New()
+	responseHash := signerOpts.HashFunc().New()
 	responseHash.Write(tbsResponseDataDER)
-	signature, err := priv.Sign(rand.Reader, responseHash.Sum(nil), hashFunc)
+	signature, err := priv.Sign(rand.Reader, responseHash.Sum(nil), signerOpts)
 	if err != nil {
 		return nil, err
 	}
